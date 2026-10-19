@@ -13,6 +13,7 @@ def solve(
     burnin: int = 0,
     key: Array | None = None,
     associative_scan: bool = True,
+    x0: Array | None = None,
 ) -> Array:
     """
     Obtain the solution of the linear system
@@ -23,7 +24,9 @@ def solve(
     process and calculating the mean over the samples.
 
     Args:
-        A: Linear system matrix.
+        A: Linear system matrix (Array or thermox.ProcessedDriftMatrix).
+            Passing a ProcessedDriftMatrix (from thermox.utils.preprocess_drift_matrix)
+            reuses its eigendecomposition across many right-hand sides.
         b: Linear system vector.
         num_samples: Number of samples to be collected.
         dt: Time step.
@@ -31,18 +34,23 @@ def solve(
             Samples before this step are not collected.
         key: JAX random key
         associative_scan: If True, uses jax.lax.associative_scan.
+        x0: Initial state of the process, defaults to zeros. A good initial guess
+            (e.g. the solution of a nearby system) removes the start-up bias.
 
     Returns:
         Approximate solution, x, of the linear system.
     """
     if key is None:
         key = random.PRNGKey(0)
+    if isinstance(A, ProcessedDriftMatrix):
+        mean = (A.eigvecs @ ((A.eigvecs_inv @ b) / A.eigvals)).real
+    else:
+        mean = jnp.linalg.solve(A, b)
     ts = jnp.arange(burnin, burnin + num_samples + 1) * dt
     ts = jnp.concatenate([jnp.array([0]), ts])
-    x0 = jnp.zeros_like(b)
-    samples = sample_identity_diffusion(
-        key, ts, x0, A, jnp.linalg.solve(A, b), associative_scan
-    )[1:]
+    if x0 is None:
+        x0 = jnp.zeros_like(b)
+    samples = sample_identity_diffusion(key, ts, x0, A, mean, associative_scan)[1:]
     return jnp.mean(samples, axis=0)
 
 
